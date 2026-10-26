@@ -1,12 +1,22 @@
 # expense-service
 
-FastAPI + SQLAlchemy service for tracking expenses. SQLite file (`expenses.db`) is created
-on first run.
+FastAPI + SQLAlchemy service for tracking expenses. It stores its data in the `expenses`
+table, in the `expense_db` database on PostgreSQL.
 
 ```
 src/expense_service/   main.py, database.py, models.py, schemas.py
 tests/                 test_expenses.py
 ```
+
+## Configuration
+
+| Env var | Default |
+|---------|---------|
+| `DATABASE_URL` | `sqlite:///./expenses.db` |
+
+Any URL starting with `sqlite` is opened as a SQLite file; anything else is opened as
+PostgreSQL. The compose file points it at
+`postgresql+psycopg://expense_user:local_dev_password@postgres:5432/expense_db`.
 
 ## Run
 
@@ -17,15 +27,21 @@ uv sync
 uv run uvicorn expense_service.main:app --reload --port 8001
 ```
 
+With no `DATABASE_URL` this uses a local SQLite file. To use the container's PostgreSQL:
+
+```bash
+export DATABASE_URL=postgresql+psycopg://expense_user:local_dev_password@localhost:5432/expense_db
+uv run uvicorn expense_service.main:app --reload --port 8001
+```
+
 Docker:
 
 ```bash
-docker build -t expense-service .
-docker run -p 8001:8001 -v expense_data:/app/data -e DATABASE_URL=sqlite:////app/data/expenses.db expense-service
+docker compose up --build expense-service
 ```
 
-The volume is what keeps the database across container removal. `docker compose up --build`
-from the repo root mounts it for you.
+The `expenses` table is created on startup, so the `expense_db` database has to exist
+first — see the root README.
 
 Docs at http://localhost:8001/docs
 

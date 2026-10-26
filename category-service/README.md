@@ -1,12 +1,22 @@
 # category-service
 
-FastAPI + SQLAlchemy service for managing expense categories. SQLite file (`categories.db`)
-is created on first run.
+FastAPI + SQLAlchemy service for managing expense categories. It stores its data in the
+`categories` table, in the `category_db` database on PostgreSQL.
 
 ```
 src/category_service/   main.py, database.py, models.py, schemas.py
 tests/                  test_categories.py
 ```
+
+## Configuration
+
+| Env var | Default |
+|---------|---------|
+| `DATABASE_URL` | `sqlite:///./categories.db` |
+
+Any URL starting with `sqlite` is opened as a SQLite file; anything else is opened as
+PostgreSQL. The compose file points it at
+`postgresql+psycopg://expense_user:local_dev_password@postgres:5432/category_db`.
 
 ## Run
 
@@ -17,15 +27,21 @@ uv sync
 uv run uvicorn category_service.main:app --reload --port 8002
 ```
 
+With no `DATABASE_URL` this uses a local SQLite file. To use the container's PostgreSQL:
+
+```bash
+export DATABASE_URL=postgresql+psycopg://expense_user:local_dev_password@localhost:5432/category_db
+uv run uvicorn category_service.main:app --reload --port 8002
+```
+
 Docker:
 
 ```bash
-docker build -t category-service .
-docker run -p 8002:8002 -v category_data:/app/data -e DATABASE_URL=sqlite:////app/data/categories.db category-service
+docker compose up --build category-service
 ```
 
-The volume is what keeps the database across container removal. `docker compose up --build`
-from the repo root mounts it for you.
+The `categories` table is created on startup, so the `category_db` database has to exist
+first — see the root README.
 
 Docs at http://localhost:8002/docs
 

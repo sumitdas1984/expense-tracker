@@ -3,10 +3,10 @@
 A personal expense tracker. Record expenses against categories, see where the money went
 each month, and browse it all from a web UI.
 
-Four independent services: three FastAPI APIs, each with its own SQLite database, and a
+Four independent services: three FastAPI APIs over a shared PostgreSQL server, and a
 Streamlit UI that talks to them over HTTP.
 
-Python 3.13 · FastAPI · SQLAlchemy · SQLite · Streamlit · uv · Docker
+Python 3.13 · FastAPI · SQLAlchemy · PostgreSQL 17 · Streamlit · uv · Docker
 
 ## Architecture
 
@@ -20,17 +20,21 @@ Python 3.13 · FastAPI · SQLAlchemy · SQLite · Streamlit · uv · Docker
 ┌───────────────┐  ┌───────────────┐  ┌───────────────┐
 │    expense    │  │    category   │  │     report    │
 │    :8001      │  │     :8002     │  │     :8003     │
-│  expenses.db  │  │ categories.db │  │  no database  │
-└───────────────┘  └───────────────┘  └───────┬───────┘
-                                             │
-                    reads expenses ────────────┤
-                    reads categories ──────────┘
+│               │  │               │  │               │
+│  expense_db   │  │  category_db  │  │  no database  │
+└───────┬───────┘  └───────┬───────┘  └───────┬───────┘
+        │                  │                  │
+        └──────────┬───────┴──────────────────┘
+                   │
+          ┌────────┴─────────┐
+          │  postgres :5432  │  postgres:17
+          └──────────────────┘
 ```
 
 | Service | Port | Owns |
 |---------|------|------|
-| [expense-service](expense-service/) | 8001 | the `expenses` table |
-| [category-service](category-service/) | 8002 | the `categories` table |
+| [expense-service](expense-service/) | 8001 | the `expenses` table in `expense_db` |
+| [category-service](category-service/) | 8002 | the `categories` table in `category_db` |
 | [report-service](report-service/) | 8003 | nothing — it aggregates the other two |
 | [ui-service](ui-service/) | 8501 | the web interface |
 
@@ -44,8 +48,8 @@ can be changed or replaced on its own.
 - Manage categories — create, rename, delete
 - Monthly report: total spend and number of expenses
 - Category-wise report: spend per category, with a bar chart
-- A health endpoint on every service
-- Data persists in named volumes, so it survives `docker compose down`
+- A health endpoint on every API service
+- Data persists in a named volume, so it survives `docker compose down`
 
 ## Prerequisites
 
@@ -67,9 +71,17 @@ Then open **http://localhost:8501** for the UI.
 | Expense API | http://localhost:8001/docs |
 | Category API | http://localhost:8002/docs |
 | Report API | http://localhost:8003/docs |
+| PostgreSQL | localhost:5432 |
 
-Stop the stack with `docker compose down` — the data stays in the named volumes. Add `-v`
-to delete that data too.
+Stop the stack with `docker compose down` — the data stays in the `postgres_data` volume. Add
+`-v` to delete that data too.
+
+The compose file starts PostgreSQL 17 and creates `expense_db`. `category_db` is not
+created for you, so create it once:
+
+```bash
+docker compose exec postgres createdb -U expense_user category_db
+```
 
 ### Running a service locally
 
@@ -79,6 +91,13 @@ Each service has its own README. The general shape for an API:
 cd expense-service
 uv sync
 uv run uvicorn expense_service.main:app --reload --port 8001
+```
+
+With no `DATABASE_URL` set, a service falls back to a local SQLite file, so it runs
+without PostgreSQL. Point it at the container instead with:
+
+```bash
+export DATABASE_URL=postgresql+psycopg://expense_user:local_dev_password@localhost:5432/expense_db
 ```
 
 For the UI:

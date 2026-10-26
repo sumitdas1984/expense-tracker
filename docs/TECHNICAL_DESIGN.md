@@ -8,8 +8,9 @@
 | API framework | FastAPI | Typed request/response models, automatic OpenAPI docs |
 | UI framework | Streamlit 1.66 | Python-native; the fastest path to a working interface |
 | HTTP client | requests | Used by the UI to call the APIs |
-| ORM | SQLAlchemy 2.x | Explicit models, a clear path off SQLite later |
-| Database | SQLite | Zero-setup for V1.0; each data service owns its own file |
+| ORM | SQLAlchemy 2.x | Explicit models, same code across SQLite and PostgreSQL |
+| Database | PostgreSQL 17 | One server, one database per data service |
+| Database driver | psycopg 3 (`psycopg[binary]`) | The `postgresql+psycopg` URL scheme |
 | ASGI server | uvicorn | Standard FastAPI runner |
 | Dependency and build tool | uv | Resolves fast, manages the venv, installs the project |
 | Packaging | hatchling (`src/` layout) for the API services, `uv_build` for `ui-service` | Keeps the importable package separate from the repo root |
@@ -18,9 +19,9 @@
 
 ## 2. System Architecture
 
-Four independent services. Each runs in its own container. The two data services own a
-database; `report-service` and `ui-service` own none. Services reach each other over HTTP
-only — no shared database, no shared schema.
+Four independent services. Each runs in its own container. The two data services each own a
+database on a shared PostgreSQL server; `report-service` and `ui-service` own none.
+Services reach each other over HTTP only — no shared database, no shared schema.
 
 ```
                     ┌──────────────┐
@@ -33,11 +34,14 @@ only — no shared database, no shared schema.
 │    expense    │  │    category   │  │     report    │
 │    :8001      │  │     :8002     │  │     :8003     │
 │               │  │               │  │               │
-│  expenses.db  │  │ categories.db │  │  no database  │
-└───────────────┘  └───────────────┘  └───────┬───────┘
-                                             │
-                    reads expenses ────────────┤
-                    reads categories ──────────┘
+│  expense_db   │  │  category_db  │  │  no database  │
+└───────┬───────┘  └───────┬───────┘  └───────┬───────┘
+        │                  │                  │
+        └──────────┬───────┴──────────────────┘
+                   │
+          ┌────────┴─────────┐
+          │  postgres :5432  │  postgres:17
+          └──────────────────┘
 ```
 
 Consequences of this shape:
@@ -45,6 +49,8 @@ Consequences of this shape:
 - A service can be replaced or rewritten without touching the others.
 - `report-service` and `ui-service` hold no data of their own, so they cannot drift out of
   sync with their sources.
+- The two data services share a PostgreSQL server but not a database, so a schema change in
+  one cannot affect the other.
 - There is no distributed transaction. Cross-service consistency is not guaranteed, and V1.0
   does not need it.
 
@@ -52,8 +58,8 @@ Consequences of this shape:
 
 | Service | Port | Owns | Responsibilities | Depends on |
 |---------|------|------|------------------|------------|
-| `expense-service` | 8001 | `expenses` table | Create, list, filter, update, delete expenses | — |
-| `category-service` | 8002 | `categories` table | Create, list, update, delete categories | — |
+| `expense-service` | 8001 | `expense_db`, the `expenses` table | Create, list, filter, update, delete expenses | PostgreSQL |
+| `category-service` | 8002 | `category_db`, the `categories` table | Create, list, update, delete categories | PostgreSQL |
 | `report-service` | 8003 | nothing | Monthly and category-wise reports | the other two, over HTTP |
 | `ui-service` | 8501 | nothing | The web interface over all three APIs | the other three, over HTTP |
 
@@ -77,7 +83,7 @@ Two services break the pattern:
 
 ## 4. Data Model
 
-### Expense — `expense-service`, table `expenses`
+### Expense — `expense-service`, `expense_db.expenses`
 
 | Column | Type | Constraints | Notes |
 |--------|------|-------------|-------|
@@ -87,13 +93,16 @@ Two services break the pattern:
 | `description` | String | not null | |
 | `expense_date` | Date | not null | |
 
-### Category — `category-service`, table `categories`
+### Category — `category-service`, `category_db.categories`
 
 | Column | Type | Constraints | Notes |
 |--------|------|-------------|-------|
 | `id` | Integer | PK, indexed | |
 | `name` | String | not null, unique | Duplicate names are rejected with 409 |
 | `description` | String | nullable | |
+
+Both tables are created by SQLAlchemy's `create_all` at startup rather than by a migration
+tool. There is no migration history, so changing a column means recreating the table.
 
 ### Known data model gaps
 
@@ -171,8 +180,25 @@ and `expense_count`; category-wise returns a list of `{category, expense_count, 
 | `REPORT_SERVICE_URL` | ui-service | `http://localhost:8003` | Where to find report-service |
 
 All of them are optional locally — the defaults work. Under Docker, `docker-compose.yml`
-sets them, the two database URLs point at the mounted volume, and the service URLs become
-compose hostnames.
+sets them: the two database URLs become `postgresql+psycopg://` URLs pointing at the
+`postgres` service, and the service URLs become compose hostnames.
+
+`database.py` branches on the URL scheme. A URL starting with `sqlite` is opened with
+`connect_args={"check_same_thread": False}`; anything else is opened as a plain
+PostgreSQL engine. So the same code runs against either, and the choice is entirely
+configuration:
+
+```python
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./expenses.db")
+
+if DATABASE_URL.startswith("sqlite"):
+    engine = create_engine(
+        DATABASE_URL,
+        connect_args={"check_same_thread": False},
+    )
+else:
+    engine = create_engine(DATABASE_URL)
+```
 
 Local setup per API service:
 
@@ -180,6 +206,13 @@ Local setup per API service:
 cd <service>
 uv sync
 uv run uvicorn <package>.main:app --reload --port <port>
+```
+
+Without `DATABASE_URL` this uses a local SQLite file. To use the container's PostgreSQL
+instead:
+
+```bash
+export DATABASE_URL=postgresql+psycopg://expense_user:local_dev_password@localhost:5432/expense_db
 ```
 
 For the UI:
@@ -196,10 +229,11 @@ Each service has a `Dockerfile` based on `python:3.13-slim` with `uv` installed.
 copies `src/` and installs the project, so the container runs the same importable package
 as a local checkout.
 
-`docker-compose.yml` runs all four together:
+`docker-compose.yml` runs all five together:
 
-- `expense-service` — 8001, database in the `expense_data` volume at `/app/data`
-- `category-service` — 8002, database in the `category_data` volume at `/app/data`
+- `postgres` — 5432, the `postgres:17` image, data in the `postgres_data` volume
+- `expense-service` — 8001, uses `expense_db`
+- `category-service` — 8002, uses `category_db`
 - `report-service` — 8003, no database, reaches the other two by service hostname
 - `ui-service` — 8501, no database, reaches all three by service hostname
 
@@ -209,8 +243,23 @@ docker compose down           # stop; the named volumes keep the data
 docker compose down -v        # stop and delete the data
 ```
 
-The named volumes are what make the data survive container removal. Without them, each
-`sqlite` file dies with its container.
+The `postgres_data` volume is what makes the data survive container removal.
+
+**`category_db` has to be created once.** The Postgres image only creates the database
+named by `POSTGRES_DB`, which is `expense_db`. There is no init script in the repo, so
+after the first `up` run:
+
+```bash
+docker compose exec postgres createdb -U expense_user category_db
+```
+
+**The `expense_data` and `category_data` volumes are leftovers** from the SQLite setup.
+The database files no longer live at `/app/data`, so those volumes now hold nothing the
+services read. They can be dropped from the compose file.
+
+**Schema creation is not a migration.** Each service calls `Base.metadata.create_all` at
+startup, so tables appear on first boot and are never altered afterwards. A column change
+needs a manual `ALTER TABLE`, or a migration tool such as Alembic.
 
 ## 8. Testing Strategy
 
@@ -229,7 +278,8 @@ uv run pytest
 ```
 
 `expense-service` and `category-service` point the app at an in-memory SQLite database
-through a `get_db` override, so tests are fast and leave no files behind.
+through a `get_db` override, so tests are fast, need no PostgreSQL, and leave no files
+behind. Production runs against PostgreSQL, but the tests do not exercise that path.
 
 `report-service` has no database. It uses `respx` to mock the HTTP calls to the other two
 services, so its tests run without anything else being up. This is the pattern to follow
@@ -248,16 +298,21 @@ single machine.
 
 - **Compute** — ECS/Fargate for the four services, or App Runner for the simpler
   one-service-per-container case. The Dockerfiles need no change.
-- **Databases** — SQLite does not work across replicas. Move each data service to its own
-  RDS Postgres instance, or one instance with a database per service. `DATABASE_URL` already
-  makes this a configuration change, but the `sqlite`-specific engine options in
-  `database.py` need to become conditional.
+- **Databases** — the local setup already runs PostgreSQL, so production is a matter of
+  pointing `DATABASE_URL` at RDS. Use one RDS instance with `expense_db` and `category_db`
+  on it, or a separate instance per data service. Two things need work first: the
+  `sqlite`-specific branch in `database.py` should go once SQLite is no longer needed, and
+  `create_all` needs replacing with a real migration tool.
 - **Registry** — ECR, with images built and pushed from CI.
 - **Ingress** — an Application Load Balancer in front of the services, routing by path so
   `/expenses` and `/categories` land on the right one, with the UI at the root.
 - **Configuration and secrets** — `DATABASE_URL` and the service URLs move to SSM
-  Parameter Store or Secrets Manager, injected as environment variables.
-- **CI/CD** — GitHub Actions running the test suites and building images on merge.
+  Parameter Store or Secrets Manager, injected as environment variables. The credentials
+  currently in `docker-compose.yml` are local-development values and must not be reused
+  in production.
+- **CI/CD** — GitHub Actions running the test suites and building images on merge. The
+  services need a PostgreSQL service container to test against before the SQLite
+  fallback is removed.
 - **MCP server and chatbot** — expose the APIs as MCP tools in their own service, with
   authentication and per-user scoping. The current services are unauthenticated and
   single-tenant, so this work comes first.
