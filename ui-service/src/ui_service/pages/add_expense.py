@@ -27,7 +27,7 @@ def show_add_expense():
     with st.form("expense_form"):
         amount = st.number_input(
             "Amount",
-            min_value=0.01,
+            min_value=0.00,
             step=100.0,
         )
 

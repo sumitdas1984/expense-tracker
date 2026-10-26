@@ -28,6 +28,19 @@ services:
       - expense-service
       - category-service
 
+  ui-service:
+    build: ./ui-service
+    ports:
+      - "8501:8501"
+    environment:
+      EXPENSE_SERVICE_URL: http://expense-service:8001
+      CATEGORY_SERVICE_URL: http://category-service:8002
+      REPORT_SERVICE_URL: http://report-service:8003
+    depends_on:
+      - expense-service
+      - category-service
+      - report-service
+      
 volumes:
   expense_data:
   category_data:
