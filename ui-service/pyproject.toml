@@ -1,0 +1,20 @@
+[project]
+name = "ui-service"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Sumit Das", email = "sumitdas20111984@gmail.com.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "requests>=2.34.2",
+    "streamlit>=1.66.1",
+]
+
+[project.scripts]
+ui-service = "ui_service:main"
+
+[build-system]
+requires = ["uv_build>=0.10.12,<0.11.0"]
+build-backend = "uv_build"
