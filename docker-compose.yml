@@ -4,18 +4,22 @@ services:
     ports:
       - "8001:8001"
     environment:
-      DATABASE_URL: sqlite:////app/data/expenses.db
+      DATABASE_URL: postgresql+psycopg://expense_user:local_dev_password@postgres:5432/expense_db
     volumes:
       - expense_data:/app/data
+    depends_on:
+    - postgres
 
   category-service:
     build: ./category-service
     ports:
       - "8002:8002"
     environment:
-      DATABASE_URL: sqlite:////app/data/categories.db
+      DATABASE_URL: postgresql+psycopg://expense_user:local_dev_password@postgres:5432/category_db
     volumes:
       - category_data:/app/data
+    depends_on:
+      - postgres
 
   report-service:
     build: ./report-service
@@ -40,7 +44,19 @@ services:
       - expense-service
       - category-service
       - report-service
-      
+
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: expense_user
+      POSTGRES_PASSWORD: local_dev_password
+      POSTGRES_DB: expense_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
 volumes:
   expense_data:
   category_data:
+  postgres_data:
