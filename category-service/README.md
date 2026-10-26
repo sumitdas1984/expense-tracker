@@ -21,8 +21,11 @@ Docker:
 
 ```bash
 docker build -t category-service .
-docker run -p 8002:8002 category-service
+docker run -p 8002:8002 -v category_data:/app/data -e DATABASE_URL=sqlite:////app/data/categories.db category-service
 ```
+
+The volume is what keeps the database across container removal. `docker compose up --build`
+from the repo root mounts it for you.
 
 Docs at http://localhost:8002/docs
 

@@ -21,8 +21,11 @@ Docker:
 
 ```bash
 docker build -t expense-service .
-docker run -p 8001:8001 expense-service
+docker run -p 8001:8001 -v expense_data:/app/data -e DATABASE_URL=sqlite:////app/data/expenses.db expense-service
 ```
+
+The volume is what keeps the database across container removal. `docker compose up --build`
+from the repo root mounts it for you.
 
 Docs at http://localhost:8001/docs
 
@@ -44,7 +47,3 @@ Expense body: `amount` (>0), `category_id` (>0), `description`, `expense_date` (
 ```bash
 uv run pytest
 ```
-
-## Open Issues
-
-1. SQLite lives inside the container (`/app/expenses.db`) — removing the container wipes it. Fix with a Docker volume mount so the db persists across the container lifecycle
