@@ -3,13 +3,18 @@
 FastAPI + SQLAlchemy service for managing expense categories. SQLite file (`categories.db`)
 is created on first run.
 
+```
+src/category_service/   main.py, database.py, models.py, schemas.py
+tests/                  test_categories.py
+```
+
 ## Run
 
 Local:
 
 ```bash
 uv sync
-uv run uvicorn main:app --reload --port 8002
+uv run uvicorn category_service.main:app --reload --port 8002
 ```
 
 Docker:

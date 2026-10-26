@@ -1,9 +1,9 @@
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from database import Base, engine, SessionLocal
-from models import Category
-from schemas import CategoryCreate, CategoryUpdate, CategoryResponse
+from .database import Base, engine, SessionLocal
+from .models import Category
+from .schemas import CategoryCreate, CategoryUpdate, CategoryResponse
 
 Base.metadata.create_all(bind=engine)
 

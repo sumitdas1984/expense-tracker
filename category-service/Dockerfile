@@ -6,16 +6,16 @@ WORKDIR /app
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Copy dependency files
-COPY pyproject.toml uv.lock ./
-
-# Install dependencies
-RUN uv sync --frozen --no-install-project
+COPY pyproject.toml uv.lock README.md ./
 
 # Copy application code
-COPY *.py ./
+COPY src/ ./src/
+
+# Install dependencies and the project itself
+RUN uv sync --frozen
 
 # Expose Category Service port
 EXPOSE 8002
 
 # Start the application
-CMD ["uv", "run", "--no-sync", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8002"]
+CMD ["uv", "run", "--no-sync", "uvicorn", "category_service.main:app", "--host", "0.0.0.0", "--port", "8002"]
