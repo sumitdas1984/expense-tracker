@@ -6,22 +6,27 @@
 |-------|--------|-------|
 | Language | Python 3.13 | Matches the local toolchain |
 | API framework | FastAPI | Typed request/response models, automatic OpenAPI docs |
+| UI framework | Streamlit 1.66 | Python-native; the fastest path to a working interface |
+| HTTP client | requests | Used by the UI to call the APIs |
 | ORM | SQLAlchemy 2.x | Explicit models, a clear path off SQLite later |
-| Database | SQLite | Zero-setup for V1.0; each service owns its own file |
+| Database | SQLite | Zero-setup for V1.0; each data service owns its own file |
 | ASGI server | uvicorn | Standard FastAPI runner |
 | Dependency and build tool | uv | Resolves fast, manages the venv, installs the project |
-| Packaging | hatchling, `src/` layout | Keeps the importable package separate from the repo root |
+| Packaging | hatchling (`src/` layout) for the API services, `uv_build` for `ui-service` | Keeps the importable package separate from the repo root |
 | Tests | pytest, httpx `TestClient`, respx | respx mocks outbound HTTP so `report-service` needs no live backends |
 | Containers | Docker, `python:3.13-slim` + uv | Small image, same toolchain as local |
 
 ## 2. System Architecture
 
-Three independent FastAPI services. Each owns its own database and runs in its own
-container. Services reach each other over HTTP only — no shared database, no shared schema.
+Four independent services. Each runs in its own container. The two data services own a
+database; `report-service` and `ui-service` own none. Services reach each other over HTTP
+only — no shared database, no shared schema.
 
 ```
-                         client
-                           │
+                    ┌──────────────┐
+                    │  ui-service  │  Streamlit, :8501
+                    └──────┬───────┘
+                           │ HTTP
         ┌──────────────────┼──────────────────┐
         ▼                  ▼                  ▼
 ┌───────────────┐  ┌───────────────┐  ┌───────────────┐
@@ -38,7 +43,8 @@ container. Services reach each other over HTTP only — no shared database, no s
 Consequences of this shape:
 
 - A service can be replaced or rewritten without touching the others.
-- `report-service` has no data of its own, so it cannot drift out of sync with its sources.
+- `report-service` and `ui-service` hold no data of their own, so they cannot drift out of
+  sync with their sources.
 - There is no distributed transaction. Cross-service consistency is not guaranteed, and V1.0
   does not need it.
 
@@ -49,20 +55,25 @@ Consequences of this shape:
 | `expense-service` | 8001 | `expenses` table | Create, list, filter, update, delete expenses | — |
 | `category-service` | 8002 | `categories` table | Create, list, update, delete categories | — |
 | `report-service` | 8003 | nothing | Monthly and category-wise reports | the other two, over HTTP |
+| `ui-service` | 8501 | nothing | The web interface over all three APIs | the other three, over HTTP |
 
 Each service is a self-contained Python package under `src/`:
 
 ```
 <service>/
-├── src/<package>/       main.py, database.py, models.py, schemas.py
+├── src/<package>/
 ├── tests/               pytest suite
-├── pyproject.toml       hatchling build, package lives in src/<package>
+├── pyproject.toml
 ├── Dockerfile
 └── README.md
 ```
 
-`report-service` is the exception — it has no database, so it is just
-`src/report_service/{main.py,config.py}`.
+The API services are shaped like `src/<package>/{main.py,database.py,models.py,schemas.py}`.
+Two services break the pattern:
+
+- `report-service` has no database, so it is just `src/report_service/{main.py,config.py}`.
+- `ui-service` is a Streamlit app, so it is `src/ui_service/main.py`, `config.py`, and a
+  `pages/` package — one module per page, each exposing a single `show_*()` function.
 
 ## 4. Data Model
 
@@ -93,7 +104,7 @@ Each service is a self-contained Python package under `src/`:
 
 ## 5. API Requirements
 
-All endpoints return JSON. Each service also serves OpenAPI docs at `/docs`.
+All endpoints return JSON. Each API service also serves OpenAPI docs at `/docs`.
 
 ### `expense-service` — :8001
 
@@ -138,6 +149,14 @@ and `expense_count`; category-wise returns a list of `{category, expense_count, 
 - `GET /expenses` returns no total count, so a client cannot build accurate pagination.
 - `report-service` fetches with `limit=100` and no pagination, so a month with more than
   100 expenses is under-reported.
+- The UI's amount field allows `0`, but the API requires an amount greater than zero and
+  answers with a 422.
+- The UI calls `st.rerun()` right after showing a success message on category create, so
+  the message is cleared before it is seen.
+- The report page defaults to January rather than the current month, so a report always
+  needs a deliberate month choice.
+- `st.dataframe(use_container_width=True)` is deprecated in Streamlit 1.66 and warns on
+  every render; it wants `width="stretch"` instead.
 
 ## 6. Configuration and Environment Setup
 
@@ -147,16 +166,28 @@ and `expense_count`; category-wise returns a list of `{category, expense_count, 
 | `DATABASE_URL` | category-service | `sqlite:///./categories.db` | Database location |
 | `EXPENSE_SERVICE_URL` | report-service | `http://localhost:8001` | Where to find expense-service |
 | `CATEGORY_SERVICE_URL` | report-service | `http://localhost:8002` | Where to find category-service |
+| `EXPENSE_SERVICE_URL` | ui-service | `http://localhost:8001` | Where to find expense-service |
+| `CATEGORY_SERVICE_URL` | ui-service | `http://localhost:8002` | Where to find category-service |
+| `REPORT_SERVICE_URL` | ui-service | `http://localhost:8003` | Where to find report-service |
 
-All four are optional locally — the defaults work. Under Docker, `docker-compose.yml` sets
-them, and the two database URLs point at the mounted volume.
+All of them are optional locally — the defaults work. Under Docker, `docker-compose.yml`
+sets them, the two database URLs point at the mounted volume, and the service URLs become
+compose hostnames.
 
-Local setup per service:
+Local setup per API service:
 
 ```bash
 cd <service>
 uv sync
 uv run uvicorn <package>.main:app --reload --port <port>
+```
+
+For the UI:
+
+```bash
+cd ui-service
+uv sync
+uv run streamlit run src/ui_service/main.py --server.port 8501
 ```
 
 ## 7. Docker and Local Deployment
@@ -165,11 +196,12 @@ Each service has a `Dockerfile` based on `python:3.13-slim` with `uv` installed.
 copies `src/` and installs the project, so the container runs the same importable package
 as a local checkout.
 
-`docker-compose.yml` runs all three together:
+`docker-compose.yml` runs all four together:
 
 - `expense-service` — 8001, database in the `expense_data` volume at `/app/data`
 - `category-service` — 8002, database in the `category_data` volume at `/app/data`
 - `report-service` — 8003, no database, reaches the other two by service hostname
+- `ui-service` — 8501, no database, reaches all three by service hostname
 
 ```bash
 docker compose up --build     # start everything
@@ -187,8 +219,9 @@ The named volumes are what make the data survive container removal. Without them
 | `expense-service` | 6 | CRUD, health, filters, pagination, 404s |
 | `category-service` | 10 | CRUD, health, duplicate-name 409, 404s |
 | `report-service` | 4 | Monthly report, category-wise report, 502 on each backend failure |
+| `ui-service` | 0 | none yet |
 
-Run them per service:
+Run the API service suites:
 
 ```bash
 cd <service>
@@ -202,23 +235,29 @@ through a `get_db` override, so tests are fast and leave no files behind.
 services, so its tests run without anything else being up. This is the pattern to follow
 for any future service that calls another service.
 
+`ui-service` has no test suite. It is currently verified by running the app and driving
+it through Streamlit's `AppTest` harness, which executes the script and reports any
+exception. That harness is the natural basis for a suite: patch `requests` for the
+outbound calls, then assert on the elements each page renders. Writing that suite is the
+first thing to do before adding more UI.
+
 ## 9. Future AWS Deployment Considerations
 
 Nothing below is implemented. These are the decisions to make when the system outgrows a
 single machine.
 
-- **Compute** — ECS/Fargate for the three services, or App Runner for the simpler
+- **Compute** — ECS/Fargate for the four services, or App Runner for the simpler
   one-service-per-container case. The Dockerfiles need no change.
-- **Databases** — SQLite does not work across replicas. Move each service to its own RDS
-  Postgres instance, or one instance with a database per service. `DATABASE_URL` already
+- **Databases** — SQLite does not work across replicas. Move each data service to its own
+  RDS Postgres instance, or one instance with a database per service. `DATABASE_URL` already
   makes this a configuration change, but the `sqlite`-specific engine options in
   `database.py` need to become conditional.
 - **Registry** — ECR, with images built and pushed from CI.
-- **Ingress** — an Application Load Balancer in front of the three services, with routing
-  by path so `/expenses` and `/categories` land on the right service.
+- **Ingress** — an Application Load Balancer in front of the services, routing by path so
+  `/expenses` and `/categories` land on the right one, with the UI at the root.
 - **Configuration and secrets** — `DATABASE_URL` and the service URLs move to SSM
   Parameter Store or Secrets Manager, injected as environment variables.
-- **CI/CD** — GitHub Actions running the three test suites and building images on merge.
+- **CI/CD** — GitHub Actions running the test suites and building images on merge.
 - **MCP server and chatbot** — expose the APIs as MCP tools in their own service, with
   authentication and per-user scoping. The current services are unauthenticated and
   single-tenant, so this work comes first.
