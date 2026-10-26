@@ -4,7 +4,7 @@ FastAPI service that builds expense reports. It has no database of its own — i
 from `expense-service` (8001) and `category-service` (8002) over HTTP.
 
 ```
-src/report_service/   main.py
+src/report_service/   main.py, config.py
 ```
 
 ## Run

@@ -3,6 +3,11 @@ from datetime import date
 import httpx
 from fastapi import FastAPI, HTTPException, Query
 
+from report_service.config import (
+    EXPENSE_SERVICE_URL,
+    CATEGORY_SERVICE_URL,
+)
+
 app = FastAPI(title="Report Service")
 
 
@@ -10,9 +15,6 @@ app = FastAPI(title="Report Service")
 def health_check():
     return {"status": "healthy"}
 
-
-EXPENSE_SERVICE_URL = "http://localhost:8001"
-CATEGORY_SERVICE_URL = "http://localhost:8002"
 
 @app.get("/reports/monthly")
 async def monthly_report(
