@@ -1,0 +1,21 @@
+services:
+  expense-service:
+    build: ./expense-service
+    ports:
+      - "8001:8001"
+
+  category-service:
+    build: ./category-service
+    ports:
+      - "8002:8002"
+
+  report-service:
+    build: ./report-service
+    ports:
+      - "8003:8003"
+    environment:
+      EXPENSE_SERVICE_URL: http://expense-service:8001
+      CATEGORY_SERVICE_URL: http://category-service:8002
+    depends_on:
+      - expense-service
+      - category-service
