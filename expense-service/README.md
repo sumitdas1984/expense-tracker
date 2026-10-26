@@ -3,13 +3,18 @@
 FastAPI + SQLAlchemy service for tracking expenses. SQLite file (`expenses.db`) is created
 on first run.
 
+```
+src/expense_service/   main.py, database.py, models.py, schemas.py
+tests/                 test_expenses.py
+```
+
 ## Run
 
 Local:
 
 ```bash
 uv sync
-uv run uvicorn main:app --reload --port 8001
+uv run uvicorn expense_service.main:app --reload --port 8001
 ```
 
 Docker:

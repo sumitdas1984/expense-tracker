@@ -3,9 +3,9 @@ from sqlalchemy.orm import Session
 from datetime import date
 from fastapi import Query
 
-from database import Base, engine, SessionLocal
-from schemas import ExpenseCreate
-from models import Expense
+from .database import Base, engine, SessionLocal
+from .schemas import ExpenseCreate
+from .models import Expense
 
 Base.metadata.create_all(bind=engine)
 
