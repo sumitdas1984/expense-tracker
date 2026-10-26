@@ -3,6 +3,9 @@ FROM python:3.13-slim
 # Set working directory
 WORKDIR /app
 
+# Create a directory for data storage
+RUN mkdir -p /app/data
+
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
