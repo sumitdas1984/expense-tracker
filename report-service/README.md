@@ -7,6 +7,13 @@ from `expense-service` (8001) and `category-service` (8002) over HTTP.
 src/report_service/   main.py, config.py
 ```
 
+## Configuration
+
+| Env var | Default |
+|---------|---------|
+| `EXPENSE_SERVICE_URL` | `http://localhost:8001` |
+| `CATEGORY_SERVICE_URL` | `http://localhost:8002` |
+
 ## Run
 
 Both other services must be running first.
@@ -36,3 +43,9 @@ Docs at http://localhost:8003/docs
 | GET | `/reports/category-wise` | `year`, `month` |
 
 Returns 502 if either backend service is unreachable.
+
+## Tests
+
+```bash
+uv run pytest
+```
