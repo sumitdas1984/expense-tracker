@@ -12,6 +12,11 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(title="Expense Service")
 
 
+@app.get("/health")
+def health_check():
+    return {"status": "healthy"}
+
+
 # Database session dependency
 def get_db():
     db = SessionLocal()

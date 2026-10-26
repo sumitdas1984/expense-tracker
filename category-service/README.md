@@ -30,6 +30,7 @@ Docs at http://localhost:8002/docs
 
 | Method | Path | Notes |
 |--------|------|-------|
+| GET | `/health` | liveness check |
 | POST | `/categories` | create, returns 201, 409 if name taken |
 | GET | `/categories` | all categories |
 | GET | `/categories/{id}` | 404 if missing |

@@ -10,6 +10,11 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(title="Category Service")
 
 
+@app.get("/health")
+def health_check():
+    return {"status": "healthy"}
+
+
 def get_db():
     db = SessionLocal()
     try:

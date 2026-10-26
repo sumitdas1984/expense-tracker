@@ -5,6 +5,12 @@ from fastapi import FastAPI, HTTPException, Query
 
 app = FastAPI(title="Report Service")
 
+
+@app.get("/health")
+def health_check():
+    return {"status": "healthy"}
+
+
 EXPENSE_SERVICE_URL = "http://localhost:8001"
 CATEGORY_SERVICE_URL = "http://localhost:8002"
 

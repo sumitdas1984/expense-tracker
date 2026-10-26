@@ -48,6 +48,13 @@ def client():
     Base.metadata.drop_all(bind=test_engine)
 
 
+def test_health_check(client):
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "healthy"}
+
+
 def test_create_expense(client):
     response = client.post(
         "/expenses",

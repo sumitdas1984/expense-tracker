@@ -31,6 +31,7 @@ Docs at http://localhost:8003/docs
 
 | Method | Path | Notes |
 |--------|------|-------|
+| GET | `/health` | liveness check |
 | GET | `/reports/monthly` | `year` (2000–2100), `month` (1–12) |
 | GET | `/reports/category-wise` | `year`, `month` |
 

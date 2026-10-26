@@ -30,6 +30,7 @@ Docs at http://localhost:8001/docs
 
 | Method | Path | Notes |
 |--------|------|-------|
+| GET | `/health` | liveness check |
 | POST | `/expenses` | create, returns 201 |
 | GET | `/expenses` | filters: `category_id`, `start_date`, `end_date`; paginates: `skip`, `limit` (default 10, max 100) |
 | GET | `/expenses/{id}` | 404 if missing |
