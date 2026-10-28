@@ -1,39 +1,151 @@
 # expense-tracker
 
-Microservices for an expense tracker. Each service is a standalone FastAPI app with its own
-SQLite database, plus a report service that aggregates across the others.
+A personal expense tracker. Record expenses against categories, see where the money went
+each month, and browse it all from a web UI.
 
-| Service | Port | Description |
-|---------|------|-------------|
-| [expense-service](expense-service/) | 8001 | CRUD for expenses |
-| [category-service](category-service/) | 8002 | CRUD for categories |
-| [report-service](report-service/) | 8003 | Monthly and category-wise expense reports |
+Four independent services: three FastAPI APIs over a shared PostgreSQL server, and a
+Streamlit UI that talks to them over HTTP.
 
-## Run everything
+Python 3.13 · FastAPI · SQLAlchemy · PostgreSQL 17 · Streamlit · uv · Docker
+
+## Architecture
+
+```
+                    ┌──────────────┐
+                    │  ui-service  │  Streamlit, :8501
+                    └──────┬───────┘
+                           │ HTTP
+        ┌──────────────────┼──────────────────┐
+        ▼                  ▼                  ▼
+┌───────────────┐  ┌───────────────┐  ┌───────────────┐
+│    expense    │  │    category   │  │     report    │
+│    :8001      │  │     :8002     │  │     :8003     │
+│               │  │               │  │               │
+│  expense_db   │  │  category_db  │  │  no database  │
+└───────┬───────┘  └───────┬───────┘  └───────┬───────┘
+        │                  │                  │
+        └──────────┬───────┴──────────────────┘
+                   │
+          ┌────────┴─────────┐
+          │  postgres :5432  │  postgres:17
+          └──────────────────┘
+```
+
+| Service | Port | Owns |
+|---------|------|------|
+| [expense-service](expense-service/) | 8001 | the `expenses` table in `expense_db` |
+| [category-service](category-service/) | 8002 | the `categories` table in `category_db` |
+| [report-service](report-service/) | 8003 | nothing — it aggregates the other two |
+| [ui-service](ui-service/) | 8501 | the web interface |
+
+No service shares a database with another. They talk over HTTP only, so any one of them
+can be changed or replaced on its own.
+
+## Features
+
+- Add expenses with an amount, category, description, and date
+- Browse expenses, filtered by category and date range
+- Manage categories — create, rename, delete
+- Monthly report: total spend and number of expenses
+- Category-wise report: spend per category, with a bar chart
+- A health endpoint on every API service
+- Data persists in a named volume, so it survives `docker compose down`
+
+## Prerequisites
+
+- **Docker and Docker Compose** — for the one-command path
+- **Python 3.13 and [uv](https://docs.astral.sh/uv/)** — only if you want to run a service
+  locally instead of in a container
+
+## Run the application
 
 ```bash
 docker compose up --build
 ```
 
-To run a single service on its own, see its README — each one also runs locally with `uv`.
+Then open **http://localhost:8501** for the UI.
 
-## Service layout
+| | |
+|---|---|
+| UI | http://localhost:8501 |
+| Expense API | http://localhost:8001/docs |
+| Category API | http://localhost:8002/docs |
+| Report API | http://localhost:8003/docs |
+| PostgreSQL | localhost:5432 |
+
+Stop the stack with `docker compose down` — the data stays in the `postgres_data` volume. Add
+`-v` to delete that data too.
+
+The compose file starts PostgreSQL 17 and creates `expense_db`. `category_db` is not
+created for you, so create it once:
+
+```bash
+docker compose exec postgres createdb -U expense_user category_db
+```
+
+### Running a service locally
+
+Each service has its own README. The general shape for an API:
+
+```bash
+cd expense-service
+uv sync
+uv run uvicorn expense_service.main:app --reload --port 8001
+```
+
+With no `DATABASE_URL` set, a service falls back to a local SQLite file, so it runs
+without PostgreSQL. Point it at the container instead with:
+
+```bash
+export DATABASE_URL=postgresql+psycopg://expense_user:local_dev_password@localhost:5432/expense_db
+```
+
+For the UI:
+
+```bash
+cd ui-service
+uv sync
+uv run streamlit run src/ui_service/main.py --server.port 8501
+```
+
+The UI needs all three APIs running first.
+
+## Project layout
+
+```
+expense-tracker/
+├── docs/                 PRD.md, TECHNICAL_DESIGN.md
+├── expense-service/
+├── category-service/
+├── report-service/
+├── ui-service/
+├── docker-compose.yml
+└── README.md
+```
+
+Every service has the same shape — an installable package under `src/`, a pytest suite,
+a `pyproject.toml`, a Dockerfile, and a README:
 
 ```
 <service>/
-├── src/<package>/       main.py, database.py, models.py, schemas.py
-├── tests/               pytest suite
-├── pyproject.toml       hatchling build, package lives in src/<package>
+├── src/<package>/
+├── tests/
+├── pyproject.toml
 ├── Dockerfile
 └── README.md
 ```
 
-`report-service` is the exception — it has no database of its own, so it is just
-`src/report_service/{main.py,config.py}`, and it reads from the other two over HTTP.
+`report-service` has no database, so it is just `src/report_service/{main.py,config.py}`.
+`ui-service` has a `pages/` package instead of the API trio.
+
+## Docs
+
+- [PRD](docs/PRD.md) — what the product does and who it is for
+- [Technical design](docs/TECHNICAL_DESIGN.md) — architecture, data model, API, and deployment
 
 ## Notes
 
-- `report-service` reaches the others by hostname (`expense-service:8001`), set through
-  `EXPENSE_SERVICE_URL` and `CATEGORY_SERVICE_URL`.
-- The SQLite files live inside their containers, so removing the containers loses the data.
-- Open issues for each service are tracked in that service's README.
+- `report-service` and `ui-service` reach the APIs by hostname (`expense-service:8001`),
+  set through `EXPENSE_SERVICE_URL`, `CATEGORY_SERVICE_URL`, and `REPORT_SERVICE_URL`.
+- Known gaps in the current implementation are listed in the
+  [technical design](docs/TECHNICAL_DESIGN.md).
