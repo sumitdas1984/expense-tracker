@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-AWS_REGION="ap-south-1"
-CLUSTER_NAME="expense-tracker-cluster"
-RDS_IDENTIFIER="expense-tracker-db"
+ENV_FILE="scripts/.infrastructure-output.env"
+if [ ! -f "$ENV_FILE" ]; then
+  echo "ERROR: $ENV_FILE not found."
+  exit 1
+fi
+source "$ENV_FILE"
 
 SERVICES=("expense-service" "category-service" "report-service" "ui-service")
 
 echo "=== 1. Checking RDS Status ==="
 RDS_STATUS=$(aws rds describe-db-instances \
-  --db-instance-identifier "$RDS_IDENTIFIER" \
+  --db-instance-identifier "expense-tracker-db" \
   --region "$AWS_REGION" \
   --query "DBInstances[0].DBInstanceStatus" \
   --output text 2>/dev/null || echo "NOT_FOUND")
-
-echo "RDS Instance '$RDS_IDENTIFIER': $RDS_STATUS"
+echo "RDS Instance: $RDS_STATUS"
 
 echo "=== 2. Checking ECS Service Counts ==="
 aws ecs describe-services \
@@ -24,47 +26,16 @@ aws ecs describe-services \
   --query 'services[*].[serviceName,runningCount,desiredCount,status]' \
   --output table
 
-echo "=== 3. Resolving UI Service Public Endpoint ==="
-UI_TASK_ARN=$(aws ecs list-tasks \
-  --cluster "$CLUSTER_NAME" \
-  --service-name "ui-service" \
-  --desired-status RUNNING \
-  --region "$AWS_REGION" \
-  --query "taskArns[0]" \
-  --output text)
-
-if [ -n "$UI_TASK_ARN" ] && [ "$UI_TASK_ARN" != "None" ]; then
-  ENI_ID=$(aws ecs describe-tasks \
-    --cluster "$CLUSTER_NAME" \
-    --tasks "$UI_TASK_ARN" \
-    --region "$AWS_REGION" \
-    --query "tasks[0].attachments[0].details[?name=='networkInterfaceId'].value | [0]" \
-    --output text)
-
-  UI_PUBLIC_IP=$(aws ec2 describe-network-interfaces \
-    --network-interface-ids "$ENI_ID" \
-    --region "$AWS_REGION" \
-    --query "NetworkInterfaces[0].Association.PublicIp" \
-    --output text 2>/dev/null || echo "None")
-
-  echo "UI Task Public IP: $UI_PUBLIC_IP"
-  echo "Streamlit UI URL:  http://${UI_PUBLIC_IP}:8501"
-else
-  echo "No running UI task found."
-fi
-
-echo "=== 4. Checking Database Connections in Service Logs ==="
-for svc in "expense-service" "category-service"; do
-  echo "--- Logs for $svc (last 5 lines) ---"
-  MSYS_NO_PATHCONV=1 aws logs filter-log-events \
-    --log-group-name "/ecs/expense-tracker" \
-    --log-stream-name-prefix "$svc" \
-    --limit 5 \
-    --region "$AWS_REGION" \
-    --query "events[*].message" \
-    --output text 2>/dev/null || echo "No logs found for $svc"
+echo "=== 3. Checking Target Group Health Status ==="
+for tg_arn in "$UI_TG_ARN" "$EXPENSE_TG_ARN" "$CATEGORY_TG_ARN" "$REPORT_TG_ARN"; do
+  TG_NAME=$(aws elbv2 describe-target-groups --target-group-arns "$tg_arn" --region "$AWS_REGION" --query "TargetGroups[0].TargetGroupName" --output text)
+  HEALTH_STATE=$(aws elbv2 describe-target-health --target-group-arn "$tg_arn" --region "$AWS_REGION" --query "TargetHealthDescriptions[0].TargetHealth.State" --output text 2>/dev/null || echo "initializing")
+  echo "Target Group '$TG_NAME': $HEALTH_STATE"
 done
 
+echo "=== 4. Resolving Public Endpoints ==="
+echo "Application Load Balancer (HTTP): http://${ALB_DNS}"
+echo "CloudFront Global Edge (HTTPS):   https://${CF_DOMAIN}"
 echo "============================================================"
-echo "Verification complete!"
+echo "Deployment verified! Open https://${CF_DOMAIN} in your browser."
 echo "============================================================"

@@ -10,8 +10,8 @@ source "$ENV_FILE"
 
 NAMESPACE_NAME="expense-tracker.local"
 EXECUTION_ROLE_NAME="expense-tracker-execution-role"
+SERVICES=("expense-service" "category-service" "report-service" "ui-service")
 
-# Map ports for services
 declare -A SERVICE_PORTS=(
   ["expense-service"]="8001"
   ["category-service"]="8002"
@@ -19,31 +19,43 @@ declare -A SERVICE_PORTS=(
   ["ui-service"]="8501"
 )
 
-SERVICES=("expense-service" "category-service" "report-service" "ui-service")
+declare -A SERVICE_TG=(
+  ["expense-service"]="$EXPENSE_TG_ARN"
+  ["category-service"]="$CATEGORY_TG_ARN"
+  ["report-service"]="$REPORT_TG_ARN"
+  ["ui-service"]="$UI_TG_ARN"
+)
 
 echo "=== 1. Ensuring IAM Task Execution Role Exists ==="
 ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
 ROLE_ARN=$(aws iam get-role --role-name "$EXECUTION_ROLE_NAME" --query "Role.Arn" --output text 2>/dev/null || true)
 
 if [ -z "$ROLE_ARN" ] || [ "$ROLE_ARN" = "None" ]; then
-  TRUST_POLICY='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ecs-tasks.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
-  
+  cat <<EOF > /tmp/ecs-trust.json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "Service": "ecs-tasks.amazonaws.com" },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+EOF
   ROLE_ARN=$(aws iam create-role \
     --role-name "$EXECUTION_ROLE_NAME" \
-    --assume-role-policy-document "$TRUST_POLICY" \
+    --assume-role-policy-document file:///tmp/ecs-trust.json \
     --query "Role.Arn" --output text)
-  
+
   aws iam attach-role-policy \
     --role-name "$EXECUTION_ROLE_NAME" \
     --policy-arn "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
-  echo "Created IAM Execution Role: $ROLE_ARN"
-  sleep 10 # Allow IAM eventual consistency
-else
-  echo "IAM Execution Role exists: $ROLE_ARN"
+  sleep 10
 fi
 
 echo "=== 2. Ensuring CloudWatch Log Group Exists ==="
-aws logs create-log-group --log-group-name "/ecs/expense-tracker" --region "$AWS_REGION" 2>/dev/null || true
+MSYS_NO_PATHCONV=1 aws logs create-log-group --log-group-name "/ecs/expense-tracker" --region "$AWS_REGION" 2>/dev/null || true
 
 echo "=== 3. Ensuring Cloud Map Private DNS Namespace Exists ==="
 NAMESPACE_ID=$(aws servicediscovery list-namespaces \
@@ -57,7 +69,7 @@ if [ -z "$NAMESPACE_ID" ] || [ "$NAMESPACE_ID" = "None" ]; then
     --vpc "$VPC_ID" \
     --region "$AWS_REGION" \
     --query "OperationId" --output text)
-  echo "Creating Cloud Map namespace $NAMESPACE_NAME (waiting)..."
+  echo "Creating Cloud Map namespace $NAMESPACE_NAME..."
   while true; do
     OP_STATUS=$(aws servicediscovery get-operation --operation-id "$OP_ID" --region "$AWS_REGION" --query "Operation.Status" --output text)
     if [ "$OP_STATUS" = "SUCCESS" ]; then break; fi
@@ -67,9 +79,6 @@ if [ -z "$NAMESPACE_ID" ] || [ "$NAMESPACE_ID" = "None" ]; then
     --region "$AWS_REGION" \
     --filters "Name=NAME,Values=${NAMESPACE_NAME}" \
     --query "Namespaces[0].Id" --output text)
-  echo "Created Cloud Map Namespace ID: $NAMESPACE_ID"
-else
-  echo "Cloud Map Namespace exists: $NAMESPACE_ID"
 fi
 
 echo "=== 4. Docker Login & Build/Push Images ==="
@@ -78,7 +87,7 @@ aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS 
 
 for svc in "${SERVICES[@]}"; do
   IMAGE_TAG="${REGISTRY}/${svc}:latest"
-  echo "Building and pushing $svc..."
+  echo "Building & pushing $svc..."
   docker build -q -t "$IMAGE_TAG" -f "${svc}/Dockerfile" "${svc}"
   docker push -q "$IMAGE_TAG"
 done
@@ -88,9 +97,10 @@ DATABASE_URL="postgresql+psycopg://${DB_USERNAME}:${DB_PASSWORD}@${RDS_ENDPOINT}
 
 for svc in "${SERVICES[@]}"; do
   port="${SERVICE_PORTS[$svc]}"
+  tg_arn="${SERVICE_TG[$svc]}"
   IMAGE_TAG="${REGISTRY}/${svc}:latest"
 
-  # Cloud Map discovery registration
+  # Cloud Map service discovery entry
   SD_ARN=$(aws servicediscovery list-services \
     --region "$AWS_REGION" \
     --filters "Name=NAMESPACE_ID,Values=${NAMESPACE_ID}" \
@@ -105,7 +115,7 @@ for svc in "${SERVICES[@]}"; do
       --query "Service.Arn" --output text)
   fi
 
-  # Environment variables per service
+  # Environment variables for service communication
   ENV_JSON="[]"
   if [ "$svc" = "expense-service" ] || [ "$svc" = "category-service" ]; then
     ENV_JSON="[{\"name\":\"DATABASE_URL\",\"value\":\"${DATABASE_URL}\"}]"
@@ -118,11 +128,12 @@ for svc in "${SERVICES[@]}"; do
     ENV_JSON="[
       {\"name\":\"EXPENSE_SERVICE_URL\",\"value\":\"http://expense-service.${NAMESPACE_NAME}:8001\"},
       {\"name\":\"CATEGORY_SERVICE_URL\",\"value\":\"http://category-service.${NAMESPACE_NAME}:8002\"},
-      {\"name\":\"REPORT_SERVICE_URL\",\"value\":\"http://report-service.${NAMESPACE_NAME}:8003\"}
+      {\"name\":\"REPORT_SERVICE_URL\",\"value\":\"http://report-service.${NAMESPACE_NAME}:8003\"},
+      {\"name\":\"STREAMLIT_SERVER_ENABLE_CORS\",\"value\":\"false\"},
+      {\"name\":\"STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION\",\"value\":\"false\"}
     ]"
   fi
 
-  # Register Task Definition
   TASK_DEF_JSON=$(cat <<EOF
 {
   "family": "${svc}",
@@ -153,9 +164,8 @@ EOF
 )
   aws ecs register-task-definition --cli-input-json "$TASK_DEF_JSON" --region "$AWS_REGION" >/dev/null
 
-  # Create or update service
-  # Keep comma-separated format without spaces:
   NETWORK_CONFIG="awsvpcConfiguration={subnets=[${TASK_SUBNET_IDS}],securityGroups=[${ECS_SG_ID}],assignPublicIp=ENABLED}"
+  LB_CONFIG="targetGroupArn=${tg_arn},containerName=${svc},containerPort=${port}"
 
   SVC_EXISTS=$(aws ecs describe-services \
     --cluster "$CLUSTER_NAME" \
@@ -165,7 +175,7 @@ EOF
     --output text 2>/dev/null || true)
 
   if [ -z "$SVC_EXISTS" ] || [ "$SVC_EXISTS" = "None" ]; then
-    echo "Creating ECS service '$svc'..."
+    echo "Creating ECS service '$svc' connected to ALB..."
     aws ecs create-service \
       --cluster "$CLUSTER_NAME" \
       --service-name "$svc" \
@@ -173,6 +183,7 @@ EOF
       --launch-type FARGATE \
       --desired-count 1 \
       --network-configuration "$NETWORK_CONFIG" \
+      --load-balancers "$LB_CONFIG" \
       --service-registries "registryArn=${SD_ARN}" \
       --region "$AWS_REGION" >/dev/null
   else
@@ -181,7 +192,7 @@ EOF
       --cluster "$CLUSTER_NAME" \
       --service "$svc" \
       --task-definition "$svc" \
-      --desired-count 1 \
+      --force-new-deployment \
       --region "$AWS_REGION" >/dev/null
   fi
 done
@@ -193,5 +204,5 @@ aws ecs wait services-stable \
   --region "$AWS_REGION"
 
 echo "============================================================"
-echo "All microservices deployed and stable!"
+echo "All microservices deployed and stable behind ALB & CloudFront!"
 echo "============================================================"
