@@ -10,6 +10,10 @@ venv/
 .env
 .env.*
 
+# AWS deployment secrets and generated output
+scripts/.secrets/
+scripts/.infrastructure-output.env
+
 # SQLite databases
 *.db
 *.sqlite3
