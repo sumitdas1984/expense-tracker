@@ -66,6 +66,11 @@ Section 9 covers the deployed version.
 | `report-service` | 8003 | nothing | Monthly and category-wise reports | the other two, over HTTP |
 | `ui-service` | 8501 | nothing | The web interface over all three APIs | the other three, over HTTP |
 
+Two more components are planned for the conversational modality in the PRD — an MCP server
+exposing the APIs as tools, and a chatbot built on it. Neither exists yet; both are Phase 3
+of the roadmap. The MCP server is a client of the same three APIs, so it adds no new data
+path and no new schema.
+
 Each service is a self-contained Python package under `src/`:
 
 ```
@@ -395,3 +400,6 @@ The gaps in the current deployment, in the order the roadmap in the PRD says to 
 - **The SQLite fallback is still in `database.py`.**
 - **Backups are off** — the RDS instance runs with `--backup-retention-period 0`.
 - **Single AZ, single instance.** An AZ failure takes the database down.
+- **No conversational interface.** The PRD describes natural-language capture and querying
+  as a second modality; the MCP server and chatbot that would provide it are Phase 3 and
+  are not built yet.

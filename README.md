@@ -4,7 +4,8 @@ A personal expense tracker. Record expenses against categories, see where the mo
 each month, and browse it all from a web UI.
 
 Four independent services: three FastAPI APIs over a shared PostgreSQL server, and a
-Streamlit UI that talks to them over HTTP.
+Streamlit UI that talks to them over HTTP. An MCP server and chatbot, so the same data can
+be reached by asking an assistant, are on the roadmap.
 
 Python 3.13 · FastAPI · SQLAlchemy · PostgreSQL 17 · Streamlit · uv · Docker
 

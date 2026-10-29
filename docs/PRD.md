@@ -2,8 +2,7 @@
 
 ## 1. Project Overview
 
-A personal expense tracking system. Users record expenses against categories and review
-spending through monthly and category-wise reports, from a single web interface.
+A personal expense tracking system. Users record expenses against categories and review spending through monthly and category-wise reports via a structured web interface and an AI assistant.
 
 The system is built as a set of small independent services — three APIs and a UI — so each
 concern can evolve, deploy, and be tested on its own.
@@ -11,19 +10,22 @@ concern can evolve, deploy, and be tested on its own.
 V1.0 is a working system: record expenses, manage categories, see reports, and do all of
 it through the web UI, deployed on AWS. The roadmap below says what comes next.
 
-## 2. Target Users
+## 2. Target Users & Interaction Modalities
 
-- **Individual users** who want a clear picture of where their money goes each month.
-- **Developers** (future) who want to query expense data from an AI assistant through MCP.
+### Primary Persona
+- **Individual Users**: Anyone seeking visibility and control over personal monthly spending without complex spreadsheets or manual overhead.
 
-V1.0 serves the first group only.
+### Interaction Modalities
+Users interact with their financial data through two channels:
+1. **Structured Interface (Web UI)**: Visual dashboards, tabular views, date/category filters, and management forms for explicit, deterministic data management. *Shipped in V1.0.*
+2. **Conversational Assistant (Natural Language)**: Frictionless capture and ad-hoc queries powered by an AI assistant (embedded chatbot and MCP server tools) to log expenses and summarize spending using natural language. *Phase 3 of the roadmap.*
 
 ## 3. Product Goals
 
 1. **Fast capture** — record an expense in seconds, not minutes.
 2. **Consistent categories** — every expense rolls up to a category, so reports are meaningful.
 3. **Simple reports** — monthly totals and per-category breakdowns, on demand.
-4. **One way in** — every function is reachable from a single web interface.
+4. **Dual-mode interaction** — capture and query data seamlessly via structured forms or natural language conversation.
 5. **Service independence** — no single component holds every concern.
 
 ## 4. Product Scope
@@ -133,6 +135,17 @@ password sits in the scripts, and nothing authenticates the API.
 | U-3 | A page states clearly when a backing service is unreachable, rather than failing silently. |
 | U-4 | The report page lets the user choose the year and month before generating. |
 
+### Conversational assistant
+
+*Phase 3 — not built yet.*
+
+| ID | Requirement |
+|----|-------------|
+| N-1 | A user records an expense by describing it in natural language, without opening a form. |
+| N-2 | A user asks for spending over a period and gets back the same figures the reports give. |
+| N-3 | The assistant reads and writes through the same APIs the web interface uses, so the two never drift apart. |
+| N-4 | When the assistant cannot reach a service, it says so rather than inventing a figure. |
+
 ### Availability
 
 | ID | Requirement |
@@ -163,6 +176,12 @@ password sits in the scripts, and nothing authenticates the API.
 
 1. Open the Category Management page.
 2. Select the category, then update its name or description, or delete it.
+
+**Log an expense by conversation** — *Phase 3*
+
+1. Ask the assistant to record an expense, for example "450 on groceries yesterday, Food".
+2. The assistant resolves the category and posts it through the expense API.
+3. It confirms the amount, category and date it recorded.
 
 ## 7. Non-Functional Requirements
 
