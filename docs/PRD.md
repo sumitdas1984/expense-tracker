@@ -9,8 +9,7 @@ The system is built as a set of small independent services — three APIs and a 
 concern can evolve, deploy, and be tested on its own.
 
 V1.0 is a working system: record expenses, manage categories, see reports, and do all of
-it through the web UI. Everything listed under future scope is a direction, not a
-commitment.
+it through the web UI, deployed on AWS. The roadmap below says what comes next.
 
 ## 2. Target Users
 
@@ -29,24 +28,46 @@ V1.0 serves the first group only.
 
 ## 4. Product Scope
 
-### V1.0 — current
+### V1.0 — Completed Baseline
 
-- Create, read, update, and delete expenses.
-- Create, read, update, and delete categories.
-- Monthly report: total spend and expense count for a given month.
-- Category-wise report: spend per category for a given month.
-- A web UI over all three APIs, with a page for each area.
-- A health endpoint on every API service.
+#### Core Functionality
 
-### Future roadmap
+- **Full CRUD for expenses** — amount, date, description, and a category reference.
+- **Full CRUD for categories** — unique names, optional descriptions.
+- **Monthly aggregation report** — total spend and transaction count for a month.
+- **Category breakdown report** — proportional spend per category, with a chart.
+- **Unified Streamlit web UI** across all of the above.
 
-The roadmap below is the intended order of work. The phases build on each other: the
-foundation has to be safe and repeatable before the platform is worth hardening, and the
-platform has to be solid before AI features are built on top of it.
+#### Microservices Architecture
 
-```
+- **Four independent containerised services** — `ui-service`, `expense-service`,
+  `category-service`, `report-service`. Each is a separate image on its own port, and the
+  two data services own their own tables.
+- **Health probes on every service** — `/health` on the three APIs, `/_stcore/health` on
+  the UI.
+
+#### Cloud Infrastructure — AWS ap-south-1
+
+- **ECS Fargate** for serverless orchestration, with **Cloud Map service discovery** on the
+  `expense-tracker.local` namespace, so the services reach each other by name.
+- **Amazon RDS for PostgreSQL** (`db.t3.micro`), single-AZ and private, in place of a
+  database file.
+- **Application Load Balancer** with path-based routing — `/expenses`, `/categories` and
+  `/reports` to their services, everything else to the UI — and sticky sessions on the UI
+  target group.
+- **Amazon CloudFront** edge layer terminating TLS with `redirect-to-https`, and an
+  `X-Origin-Verify` header sent to the origin.
+
+---
+
+### Future Roadmap
+
+The roadmap proceeds sequentially: each phase provides the stability, reproducibility, or
+security prerequisites required by the next.
+
+```text
 ┌────────────────────────────────────────────────────────────────────────┐
-│ Phase 1: Core DevOps & Infrastructure                                  │
+│ Phase 1: Core DevOps & Infrastructure (Automation & IaC)               │
 │   1. CI/CD via GitHub Actions (Automated tests, Docker builds, deploys)│ ◄── Current Step
 │   2. Security & Secrets Baseline (AWS Secrets Manager/SSM, IAM roles)  │
 │   3. IaC Migration (Terraform)                                         │
@@ -54,23 +75,23 @@ platform has to be solid before AI features are built on top of it.
                                     │
 ┌───────────────────────────────────▼────────────────────────────────────┐
 │ Phase 2: Production Readiness & Platform Hardening                     │
-│   (3. Terraform refinements / complete state lock)                     │
-│   4. Foundational Auth & Multi-Tenancy (User context, JWT / Cognito)   │
-│   5. Observability (Structured JSON logs, distributed trace IDs, APM)  │
+│   4. Terraform Refinements & Remote State Locking (S3 + DynamoDB)      │
+│   5. Foundational Auth & Multi-Tenancy (User context, JWT / Cognito)   │
+│   6. Observability (Structured JSON logs, distributed trace IDs, APM)  │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │
 ┌───────────────────────────────────▼────────────────────────────────────┐
 │ Phase 3: Advanced AI & Product Features                                │
-│   6. The MCP Server & Chatbot Layer (Expose tools & conversational UI) │
-│   7. Advanced Features & Analytics (Receipt OCR, budgets, alerts)      │
+│   7. The MCP Server & Chatbot Layer (Expose tools & conversational UI) │
+│   8. Advanced Features & Analytics (Receipt OCR, budgets, alerts)      │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
 | Phase | Items | What it delivers |
 |-------|-------|------------------|
 | **1. Core DevOps & Infrastructure** | 1. CI/CD via GitHub Actions · 2. Security and secrets baseline (Secrets Manager/SSM, IAM roles) · 3. IaC migration to Terraform | The stack deploys itself, stops leaking secrets, and stops being a folder of shell scripts |
-| **2. Production Readiness & Platform Hardening** | 3. Terraform refinements and a complete state lock · 4. Foundational auth and multi-tenancy (user context, JWT or Cognito) · 5. Observability (structured JSON logs, distributed trace ids, APM) | The stack is safe to run for real users, and debuggable when it goes wrong |
-| **3. Advanced AI & Product Features** | 6. The MCP server and chatbot layer (expose the APIs as tools, conversational UI) · 7. Advanced features and analytics (receipt OCR, budgets, alerts) | The tracker becomes queryable by an assistant, and starts to act on the data |
+| **2. Production Readiness & Platform Hardening** | 4. Terraform refinements and remote state locking (S3 + DynamoDB) · 5. Foundational auth and multi-tenancy (user context, JWT or Cognito) · 6. Observability (structured JSON logs, distributed trace ids, APM) | The stack is safe to run for real users, and debuggable when it goes wrong |
+| **3. Advanced AI & Product Features** | 7. The MCP server and chatbot layer (expose the APIs as tools, conversational UI) · 8. Advanced features and analytics (receipt OCR, budgets, alerts) | The tracker becomes queryable by an assistant, and starts to act on the data |
 
 **Where the project is now:** step 1 of Phase 1. The deployment scripts exist and are
 idempotent, but they are still run by hand — there is no pipeline yet, the database
@@ -149,9 +170,9 @@ password sits in the scripts, and nothing authenticates the API.
 |------|-------------|
 | Performance | List and report endpoints respond in well under a second for a personal dataset of thousands of rows. |
 | Failure handling | A downstream failure is reported to the caller, not swallowed. `report-service` returns 502, and the UI shows an error. |
-| Data durability | Expense and category data survives container removal. |
+| Data durability | Expense and category data survives container removal, and the deployed database is managed by RDS. |
 | Testability | Every API service has an automated test suite. `report-service` tests need no live backends. `ui-service` has no test suite yet. |
-| Portability | The full stack runs on a developer machine with one command. |
+| Portability | The full stack runs on a developer machine with one command, and on AWS through the scripts in `scripts/`. |
 
 ## 8. Acceptance Criteria
 
@@ -164,3 +185,4 @@ V1.0 is done when:
 - [ ] `report-service` returns a real monthly and category-wise report while the other two services are running.
 - [ ] Each API service's test suite passes.
 - [ ] The totals in a category-wise report match the expenses that were created.
+- [ ] The four services run on ECS Fargate in ap-south-1, reachable through CloudFront, with the data in RDS.
