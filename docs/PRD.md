@@ -38,13 +38,43 @@ V1.0 serves the first group only.
 - A web UI over all three APIs, with a page for each area.
 - A health endpoint on every API service.
 
-### Future — not in V1.0
+### Future roadmap
 
-- **MCP server** — expose the expense APIs as tools so an AI assistant can read and write expenses.
-- **Agentic chatbot** — conversational entry and querying built on MCP.
-- **Authentication and multi-user support** — V1.0 is a single shared dataset.
-- **AWS deployment** — hosting, managed databases, CI/CD.
-- **Recurring expenses, budgets, and notifications.**
+The roadmap below is the intended order of work. The phases build on each other: the
+foundation has to be safe and repeatable before the platform is worth hardening, and the
+platform has to be solid before AI features are built on top of it.
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│ Phase 1: Core DevOps & Infrastructure                                  │
+│   1. CI/CD via GitHub Actions (Automated tests, Docker builds, deploys)│ ◄── Current Step
+│   2. Security & Secrets Baseline (AWS Secrets Manager/SSM, IAM roles)  │
+│   3. IaC Migration (Terraform)                                         │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │
+┌───────────────────────────────────▼────────────────────────────────────┐
+│ Phase 2: Production Readiness & Platform Hardening                     │
+│   (3. Terraform refinements / complete state lock)                     │
+│   4. Foundational Auth & Multi-Tenancy (User context, JWT / Cognito)   │
+│   5. Observability (Structured JSON logs, distributed trace IDs, APM)  │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │
+┌───────────────────────────────────▼────────────────────────────────────┐
+│ Phase 3: Advanced AI & Product Features                                │
+│   6. The MCP Server & Chatbot Layer (Expose tools & conversational UI) │
+│   7. Advanced Features & Analytics (Receipt OCR, budgets, alerts)      │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+| Phase | Items | What it delivers |
+|-------|-------|------------------|
+| **1. Core DevOps & Infrastructure** | 1. CI/CD via GitHub Actions · 2. Security and secrets baseline (Secrets Manager/SSM, IAM roles) · 3. IaC migration to Terraform | The stack deploys itself, stops leaking secrets, and stops being a folder of shell scripts |
+| **2. Production Readiness & Platform Hardening** | 3. Terraform refinements and a complete state lock · 4. Foundational auth and multi-tenancy (user context, JWT or Cognito) · 5. Observability (structured JSON logs, distributed trace ids, APM) | The stack is safe to run for real users, and debuggable when it goes wrong |
+| **3. Advanced AI & Product Features** | 6. The MCP server and chatbot layer (expose the APIs as tools, conversational UI) · 7. Advanced features and analytics (receipt OCR, budgets, alerts) | The tracker becomes queryable by an assistant, and starts to act on the data |
+
+**Where the project is now:** step 1 of Phase 1. The deployment scripts exist and are
+idempotent, but they are still run by hand — there is no pipeline yet, the database
+password sits in the scripts, and nothing authenticates the API.
 
 ## 5. Functional Requirements
 

@@ -115,6 +115,8 @@ The UI needs all three APIs running first.
 ```
 expense-tracker/
 ├── docs/                 PRD.md, TECHNICAL_DESIGN.md
+├── scripts/              deploy-infrastructure.sh, deploy-services.sh,
+│                         verify-deployment.sh, cleanup-aws.sh
 ├── expense-service/
 ├── category-service/
 ├── report-service/
@@ -138,14 +140,47 @@ a `pyproject.toml`, a Dockerfile, and a README:
 `report-service` has no database, so it is just `src/report_service/{main.py,config.py}`.
 `ui-service` has a `pages/` package instead of the API trio.
 
+## Deploy to AWS
+
+The same four services run on ECS Fargate behind an Application Load Balancer, with
+CloudFront in front for HTTPS. The scripts in `scripts/` do it in order, and each one is
+idempotent — re-run them whenever you change something.
+
+```bash
+scripts/deploy-infrastructure.sh   # ECR, ECS cluster, security groups, ALB,
+                                   # CloudFront, RDS PostgreSQL
+scripts/deploy-services.sh         # build and push the images, register task
+                                   # definitions, run the four ECS services
+scripts/verify-deployment.sh       # report what is up and where it is
+scripts/cleanup-aws.sh             # tear everything down (asks first)
+```
+
+The first script writes `scripts/.infrastructure-output.env` with the ids and endpoints
+it created — the other two read it, so run them in that order.
+
+Everything lands in **ap-south-1**. The app is served over HTTPS from a CloudFront
+distribution, with the Application Load Balancer behind it on plain HTTP. The live URLs
+are printed by `scripts/verify-deployment.sh`, and also written to
+`scripts/.infrastructure-output.env` as `CF_DOMAIN` and `ALB_DNS`.
+
+**Cost:** the four Fargate tasks, the load balancer, CloudFront and the RDS instance bill
+continuously while they run — roughly $150 a month. `scripts/cleanup-aws.sh` removes all
+of it.
+
 ## Docs
 
-- [PRD](docs/PRD.md) — what the product does and who it is for
+- [PRD](docs/PRD.md) — what the product does, who it is for, and the **roadmap** for
+  what comes next
 - [Technical design](docs/TECHNICAL_DESIGN.md) — architecture, data model, API, and deployment
 
 ## Notes
 
 - `report-service` and `ui-service` reach the APIs by hostname (`expense-service:8001`),
   set through `EXPENSE_SERVICE_URL`, `CATEGORY_SERVICE_URL`, and `REPORT_SERVICE_URL`.
+- On AWS those hostnames are Cloud Map DNS names under `expense-tracker.local`; locally
+  they are plain host names.
+- Locally the two data services use separate databases (`expense_db` and `category_db`).
+  On AWS they share one database, `expense_tracker` — their tables are `expenses` and
+  `categories`, so they do not collide.
 - Known gaps in the current implementation are listed in the
   [technical design](docs/TECHNICAL_DESIGN.md).

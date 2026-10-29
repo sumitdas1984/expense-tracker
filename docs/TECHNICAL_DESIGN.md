@@ -54,6 +54,9 @@ Consequences of this shape:
 - There is no distributed transaction. Cross-service consistency is not guaranteed, and V1.0
   does not need it.
 
+The same four services run locally under Docker Compose and on AWS under ECS Fargate.
+Section 9 covers the deployed version.
+
 ## 3. Microservices and Responsibilities
 
 | Service | Port | Owns | Responsibilities | Depends on |
@@ -183,6 +186,11 @@ All of them are optional locally — the defaults work. Under Docker, `docker-co
 sets them: the two database URLs become `postgresql+psycopg://` URLs pointing at the
 `postgres` service, and the service URLs become compose hostnames.
 
+On AWS the same variables are set by the deployment scripts, with the service URLs
+pointing at Cloud Map names under `expense-tracker.local`. The values they take are
+written to `scripts/.infrastructure-output.env` by `deploy-infrastructure.sh`, which
+`deploy-services.sh` then reads. That file is gitignored.
+
 `database.py` branches on the URL scheme. A URL starting with `sqlite` is opened with
 `connect_args={"check_same_thread": False}`; anything else is opened as a plain
 PostgreSQL engine. So the same code runs against either, and the choice is entirely
@@ -223,7 +231,11 @@ uv sync
 uv run streamlit run src/ui_service/main.py --server.port 8501
 ```
 
+For the deployed version, see [section 9](#9-aws-deployment).
+
 ## 7. Docker and Local Deployment
+
+This is the local path. The deployed version is in [section 9](#9-aws-deployment).
 
 Each service has a `Dockerfile` based on `python:3.13-slim` with `uv` installed. The build
 copies `src/` and installs the project, so the container runs the same importable package
@@ -291,30 +303,95 @@ exception. That harness is the natural basis for a suite: patch `requests` for t
 outbound calls, then assert on the elements each page renders. Writing that suite is the
 first thing to do before adding more UI.
 
-## 9. Future AWS Deployment Considerations
+## 9. AWS Deployment
 
-Nothing below is implemented. These are the decisions to make when the system outgrows a
-single machine.
+The same four services run on ECS Fargate in **ap-south-1**, behind an Application Load
+Balancer with CloudFront in front of it.
 
-- **Compute** — ECS/Fargate for the four services, or App Runner for the simpler
-  one-service-per-container case. The Dockerfiles need no change.
-- **Databases** — the local setup already runs PostgreSQL, so production is a matter of
-  pointing `DATABASE_URL` at RDS. Use one RDS instance with `expense_db` and `category_db`
-  on it, or a separate instance per data service. Two things need work first: the
-  `sqlite`-specific branch in `database.py` should go once SQLite is no longer needed, and
-  `create_all` needs replacing with a real migration tool.
-- **Registry** — ECR, with images built and pushed from CI.
-- **Ingress** — an Application Load Balancer in front of the services, routing by path so
-  `/expenses` and `/categories` land on the right one, with the UI at the root.
-- **Configuration and secrets** — `DATABASE_URL` and the service URLs move to SSM
-  Parameter Store or Secrets Manager, injected as environment variables. The credentials
-  currently in `docker-compose.yml` are local-development values and must not be reused
-  in production.
-- **CI/CD** — GitHub Actions running the test suites and building images on merge. The
-  services need a PostgreSQL service container to test against before the SQLite
-  fallback is removed.
-- **MCP server and chatbot** — expose the APIs as MCP tools in their own service, with
-  authentication and per-user scoping. The current services are unauthenticated and
-  single-tenant, so this work comes first.
-- **Observability** — structured logs, request tracing across services, and metrics on
-  latency and error rates.
+```
+                       https://
+                          │
+                  ┌───────▼────────┐
+                  │   CloudFront    │  HTTPS, cached at the edge
+                  └───────┬────────┘
+                          │ HTTP
+                  ┌───────▼────────┐
+                  │       ALB       │  :80, one rule per API path
+                  └───┬────────┬────┘
+        ┌─────────────┘        └─────────────┐
+        │                                      │
+┌───────▼────────┐                     ┌───────▼────────┐
+│  ui-service    │                     │ expense-service│
+│     :8501      │                     │     :8001      │
+└────────────────┘                     └───────┬────────┘
+                                                   │
+        ┌────────────────┐   ┌────────────────┐   │
+        ▼                ▼   ▼                ▼   │
+┌───────────────┐  ┌───────────────┐  ┌───────────────┐
+│ category-svc  │  │ report-service│  │  RDS Postgres │
+│     :8002     │  │     :8003     │  │  expense_     │
+└───────────────┘  └───────────────┘  │  tracker      │
+                                       └───────────────┘
+```
+
+### The scripts
+
+| Script | What it does |
+|--------|--------------|
+| `deploy-infrastructure.sh` | ECR repositories, ECS cluster, three security groups, the ALB and its target groups, CloudFront, and the RDS instance |
+| `deploy-services.sh` | The task execution role, the log group, the Cloud Map namespace, the images, the task definitions, and the ECS services |
+| `verify-deployment.sh` | Reports the RDS status, the running task counts, the target group health, and the public URLs |
+| `cleanup-aws.sh` | Tears all of it down, after asking for confirmation |
+
+They run in that order. The first script writes `scripts/.infrastructure-output.env` —
+the ids, the endpoints and the target group ARNs — and the next two read it.
+
+Every script is idempotent: each resource is looked up before it is created, so a script
+can be re-run after a change without leaving duplicates behind.
+
+### Networking
+
+Three security groups, in the default VPC:
+
+| Group | Allows |
+|-------|--------|
+| `expense-tracker-alb-sg` | port 80 from `0.0.0.0/0` — the only group open to the internet |
+| `expense-tracker-ecs-sg` | all traffic from itself, and ports 8000–8501 from the ALB group |
+| `expense-tracker-rds-sg` | port 5432 from the ECS group only |
+
+The tasks run in public subnets with `assignPublicIp=ENABLED`, so they can pull images from
+ECR. There is no NAT gateway and no VPC endpoint — the tasks reach ECR over the internet
+gateway directly.
+
+### Service discovery
+
+`report-service` and `ui-service` reach the APIs by DNS name, through a Cloud Map private
+namespace called `expense-tracker.local`. The names resolve to
+`expense-service.expense-tracker.local:8001` and so on, and the task definitions inject
+them as `EXPENSE_SERVICE_URL`, `CATEGORY_SERVICE_URL` and `REPORT_SERVICE_URL`.
+
+### One database, not two
+
+On AWS both data services point at the same database, `expense_tracker`. Their tables are
+`expenses` and `categories`, so they do not collide. Locally the compose setup gives each
+service its own database, which is why the local and deployed connection strings differ.
+
+### What is not done yet
+
+The gaps in the current deployment, in the order the roadmap in the PRD says to close them:
+
+- **No CI/CD.** The scripts are run by hand. The test suites should run on merge, and the
+  images should be built in CI rather than pushed from a laptop.
+- **Secrets are in plaintext.** The master password is in the scripts and in
+  `scripts/.infrastructure-output.env`, which is gitignored. It should move to Secrets
+  Manager and be injected with `valueFrom`.
+- **No authentication.** Every service, the load balancer and the CloudFront distribution
+  are open to the internet. This is the first thing to fix before the deployment is
+  anything but a demo.
+- **No observability.** Logs go to CloudWatch as plain text, with no trace ids to follow
+  a request across the four services.
+- **No migration tool.** `create_all` creates the tables; changing a column needs a manual
+  `ALTER TABLE`.
+- **The SQLite fallback is still in `database.py`.**
+- **Backups are off** — the RDS instance runs with `--backup-retention-period 0`.
+- **Single AZ, single instance.** An AZ failure takes the database down.
